@@ -1,442 +1,100 @@
 package com.nogomy.net;
 
-import java.io.*;
-import java.net.*;
-import java.nio.charset.StandardCharsets;
+import android.app.*;
+import android.os.*;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.view.*;
+import android.widget.*;
 import java.util.*;
+import java.util.concurrent.*;
 
-public class RouterOsApi {
+public class MainActivity extends Activity {
+    LinearLayout root, content;
+    EditText ip, port, user, pass;
+    TextView status;
+    RouterOsApi api;
+    ExecutorService executor=Executors.newSingleThreadExecutor();
 
-    private Socket socket;
-    private InputStream in;
-    private OutputStream out;
+    int bg=Color.rgb(7,10,24), card=Color.rgb(17,22,42), text=Color.rgb(238,241,250), muted=Color.rgb(150,158,180), accent=Color.rgb(49,215,166);
 
-    public void connect(
-            String host,
-            int port,
-            String user,
-            String pass
-    ) throws Exception {
+    @Override public void onCreate(Bundle b){super.onCreate(b); showLogin();}
 
-        socket = new Socket();
-        socket.connect(
-                new InetSocketAddress(host, port),
-                5000
-        );
+    TextView tv(String s,int sp){TextView t=new TextView(this); t.setText(s);t.setTextColor(text);t.setTextSize(sp);t.setPadding(4,8,4,8);return t;}
+    EditText field(String hint,String value){EditText e=new EditText(this);e.setHint(hint);e.setText(value);e.setTextColor(text);e.setHintTextColor(muted);e.setSingleLine(true);e.setBackgroundResource(com.nogomy.net.R.drawable.edit_bg);e.setPadding(16,0,16,0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,58);p.setMargins(0,7,0,7);e.setLayoutParams(p);return e;}
+    Button btn(String s){Button b=new Button(this);b.setText(s);b.setTextColor(Color.WHITE);b.setTextSize(15);b.setAllCaps(false);b.setBackgroundResource(R.drawable.button_bg);b.setPadding(8,0,8,0);return b;}
 
-        socket.setSoTimeout(7000);
-
-        in = socket.getInputStream();
-        out = socket.getOutputStream();
-
-        List<String> loginWords = new ArrayList<>();
-
-        loginWords.add("/login");
-        loginWords.add("=name=" + user);
-        loginWords.add("=password=" + pass);
-
-        writeSentence(loginWords);
-
-        List<String> reply = readReply();
-
-        boolean done = reply.contains("!done");
-
-        if (!done) {
-            throw new IOException(
-                    "فشل تسجيل الدخول إلى MikroTik"
-            );
+    void base(){
+        root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(20,20,20,16);root.setBackgroundColor(bg);
+        ScrollView sv=new ScrollView(this);sv.addView(root);setContentView(sv);
+    }
+    void showLogin(){
+        base();
+        TextView title=tv("النجومي نت",30);title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);title.setTextColor(accent);root.addView(title);
+        TextView sub=tv("إدارة MikroTik المحلية",19);sub.setTextColor(text);root.addView(sub);
+        ip=field("عنوان الراوتر","10.0.0.1");root.addView(ip);
+        port=field("منفذ API","8728");root.addView(port);
+        user=field("اسم المستخدم","admin");root.addView(user);
+        pass=field("كلمة المرور","");pass.setInputType(0x81);root.addView(pass);
+        Button connect=btn("اتصال بالراوتر");root.addView(connect,new LinearLayout.LayoutParams(-1,58));
+        status=tv("متصل محلياً؟ أدخل بيانات الراوتر ثم اضغط اتصال.",14);status.setTextColor(muted);root.addView(status);
+        connect.setOnClickListener(v->doConnect());
+    }
+    void doConnect(){
+        status.setText("جاري الاتصال...");
+        executor.submit(()->{
+            try{
+                RouterOsApi a=new RouterOsApi();
+                a.connect(ip.getText().toString().trim(),Integer.parseInt(port.getText().toString().trim()),user.getText().toString(),pass.getText().toString());
+                api=a; runOnUiThread(()->showDashboard());
+            }catch(Exception e){runOnUiThread(()->status.setText("فشل الاتصال: "+e.getMessage()));}
+        });
+    }
+    void showDashboard(){
+        base();
+        TextView title=tv("النجومي نت",29);title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);title.setTextColor(accent);root.addView(title);
+        status=tv("● متصل بـ "+ip.getText().toString(),14);status.setTextColor(accent);root.addView(status);
+        content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);root.addView(content);
+        loadStats();
+        LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);
+        Button users=btn("المستخدمون");Button active=btn("المتصلون الآن");
+        row.addView(users,new LinearLayout.LayoutParams(0,58,1));row.addView(active,new LinearLayout.LayoutParams(0,58,1));root.addView(row);
+        users.setOnClickListener(v->loadUsers()); active.setOnClickListener(v->loadActive());
+        Button add=btn("＋ إضافة مستخدم Hotspot");root.addView(add,new LinearLayout.LayoutParams(-1,58));add.setOnClickListener(v->showAdd());
+        Button back=btn("تغيير الراوتر");root.addView(back,new LinearLayout.LayoutParams(-1,58));back.setOnClickListener(v->{api.close();showLogin();});
+    }
+    TextView cardText(String s){
+        TextView t=tv(s,16);t.setBackgroundColor(card);t.setPadding(18,18,18,18);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.setMargins(0,8,0,0);t.setLayoutParams(p);return t;
+    }
+    void loadStats(){
+        executor.submit(()->{try{Map<String,String> r=api.getResource();runOnUiThread(()->{
+            content.removeAllViews();
+            content.addView(cardText("الموديل: "+r.getOrDefault("board-name","-")));
+            content.addView(cardText("RouterOS: "+r.getOrDefault("version","-")));
+            content.addView(cardText("المعالج: "+r.getOrDefault("cpu-load","-")+"%"));
+            content.addView(cardText("الذاكرة الكلية: "+r.getOrDefault("total-memory","-")));
+            content.addView(cardText("مدة التشغيل: "+r.getOrDefault("uptime","-")));
+        });}catch(Exception e){runOnUiThread(()->toast("تعذر قراءة معلومات الراوتر"));}});
+    }
+    void loadUsers(){executor.submit(()->{try{List<Map<String,String>> u=api.getHotspotUsers();runOnUiThread(()->showList("مستخدمو Hotspot",u));}catch(Exception e){runOnUiThread(()->toast("تعذر جلب المستخدمين"));}});}
+    void loadActive(){executor.submit(()->{try{List<Map<String,String>> u=api.getHotspotActive();runOnUiThread(()->showList("المتصلون الآن",u));}catch(Exception e){runOnUiThread(()->toast("تعذر جلب المتصلين"));}});}
+    void showList(String title,List<Map<String,String>> list){
+        content.removeAllViews();content.addView(tv(title+" ("+list.size()+")",21));
+        if(list.isEmpty()){content.addView(cardText("لا توجد بيانات."));return;}
+        for(Map<String,String> m:list){
+            String name=m.getOrDefault("name",m.getOrDefault("user","-"));
+            String extra="IP: "+m.getOrDefault("address","-")+"   Profile: "+m.getOrDefault("profile","-");
+            content.addView(cardText("👤 "+name+"\n"+extra));
         }
     }
-
-    public List<Map<String, String>> command(
-            String command,
-            String... words
-    ) throws Exception {
-
-        List<String> sentence = new ArrayList<>();
-
-        sentence.add(command);
-
-        Collections.addAll(
-                sentence,
-                words
-        );
-
-        writeSentence(sentence);
-
-        return readMaps();
+    void showAdd(){
+        final EditText n=field("اسم المستخدم",""); final EditText p=field("كلمة المرور",""); final EditText prof=field("Profile","default"); final EditText limit=field("Limit uptime (مثال 1d)","1d");
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(22,5,22,5);
+        box.addView(n);box.addView(p);box.addView(prof);box.addView(limit);
+        new AlertDialog.Builder(this).setTitle("إضافة Hotspot User").setView(box).setNegativeButton("إلغاء",null).setPositiveButton("إضافة",(d,w)->executor.submit(()->{
+            try{api.addHotspotUser(n.getText().toString(),p.getText().toString(),prof.getText().toString(),limit.getText().toString());runOnUiThread(()->toast("تمت إضافة المستخدم"));}catch(Exception e){runOnUiThread(()->toast("فشل الإضافة: "+e.getMessage()));}
+        })).show();
     }
-
-    public List<Map<String, String>> command(
-            String command,
-            Map<String, String> attrs
-    ) throws Exception {
-
-        List<String> sentence = new ArrayList<>();
-
-        sentence.add(command);
-
-        for (Map.Entry<String, String> e : attrs.entrySet()) {
-
-            sentence.add(
-                    "=" + e.getKey() + "=" + e.getValue()
-            );
-        }
-
-        writeSentence(sentence);
-
-        return readMaps();
-    }
-
-    private void writeSentence(
-            List<String> words
-    ) throws IOException {
-
-        for (String w : words) {
-            writeWord(w);
-        }
-
-        out.write(0);
-        out.flush();
-    }
-
-    private void writeWord(
-            String s
-    ) throws IOException {
-
-        byte[] b =
-                s.getBytes(StandardCharsets.UTF_8);
-
-        int n = b.length;
-
-        if (n < 0x80) {
-
-            out.write(n);
-
-        } else if (n < 0x4000) {
-
-            out.write(
-                    (n >> 8) | 0x80
-            );
-
-            out.write(
-                    n & 0xff
-            );
-
-        } else if (n < 0x200000) {
-
-            out.write(
-                    (n >> 16) | 0xC0
-            );
-
-            out.write(
-                    (n >> 8) & 0xff
-            );
-
-            out.write(
-                    n & 0xff
-            );
-
-        } else if (n < 0x10000000) {
-
-            out.write(
-                    (n >> 24) | 0xE0
-            );
-
-            out.write(
-                    (n >> 16) & 0xff
-            );
-
-            out.write(
-                    (n >> 8) & 0xff
-            );
-
-            out.write(
-                    n & 0xff
-            );
-
-        } else {
-
-            out.write(0xF0);
-
-            out.write(
-                    (n >> 24) & 0xff
-            );
-
-            out.write(
-                    (n >> 16) & 0xff
-            );
-
-            out.write(
-                    (n >> 8) & 0xff
-            );
-
-            out.write(
-                    n & 0xff
-            );
-        }
-
-        out.write(b);
-    }
-
-    private int readLen()
-            throws IOException {
-
-        int c = in.read();
-
-        if (c < 0) {
-            throw new EOFException();
-        }
-
-        if (c < 0x80) {
-            return c;
-        }
-
-        if (c < 0xC0) {
-
-            return (
-                    (c & 0x3f) << 8
-            ) | in.read();
-        }
-
-        if (c < 0xE0) {
-
-            return (
-                    (c & 0x1f) << 16
-            )
-                    | (in.read() << 8)
-                    | in.read();
-        }
-
-        if (c < 0xF0) {
-
-            return (
-                    (c & 0x0f) << 24
-            )
-                    | (in.read() << 16)
-                    | (in.read() << 8)
-                    | in.read();
-        }
-
-        in.read();
-
-        return (
-                (in.read() << 24)
-        )
-                | (in.read() << 16)
-                | (in.read() << 8)
-                | in.read();
-    }
-
-    private String readWord()
-            throws IOException {
-
-        int n = readLen();
-
-        byte[] b = new byte[n];
-
-        int p = 0;
-
-        while (p < n) {
-
-            int r =
-                    in.read(
-                            b,
-                            p,
-                            n - p
-                    );
-
-            if (r < 0) {
-                throw new EOFException();
-            }
-
-            p += r;
-        }
-
-        return new String(
-                b,
-                StandardCharsets.UTF_8
-        );
-    }
-
-    private List<String> readReply()
-            throws IOException {
-
-        List<String> result =
-                new ArrayList<>();
-
-        while (true) {
-
-            String w = readWord();
-
-            result.add(w);
-
-            if (w.equals("!done")
-                    || w.equals("!fatal")
-                    || w.equals("!trap")) {
-
-                break;
-            }
-        }
-
-        return result;
-    }
-
-    private List<Map<String, String>> readMaps()
-            throws IOException {
-
-        List<Map<String, String>> result =
-                new ArrayList<>();
-
-        Map<String, String> current = null;
-
-        while (true) {
-
-            String w = readWord();
-
-            if (w.equals("!re")) {
-
-                current =
-                        new LinkedHashMap<>();
-
-                result.add(current);
-
-                continue;
-            }
-
-            if (w.equals("!done")
-                    || w.equals("!fatal")
-                    || w.equals("!trap")) {
-
-                break;
-            }
-
-            if (w.startsWith("=")
-                    && current != null) {
-
-                int p =
-                        w.indexOf('=', 1);
-
-                if (p > 0) {
-
-                    current.put(
-                            w.substring(1, p),
-                            w.substring(p + 1)
-                    );
-                }
-            }
-        }
-
-        return result;
-    }
-
-    public Map<String, String> getResource()
-            throws Exception {
-
-        List<Map<String, String>> r =
-                command(
-                        "/system/resource/print"
-                );
-
-        return r.isEmpty()
-                ? new HashMap<>()
-                : r.get(0);
-    }
-
-    public List<Map<String, String>> getHotspotUsers()
-            throws Exception {
-
-        return command(
-                "/ip/hotspot/user/print"
-        );
-    }
-
-    public List<Map<String, String>> getHotspotActive()
-            throws Exception {
-
-        return command(
-                "/ip/hotspot/active/print"
-        );
-    }
-
-    /*
-     * إضافة مستخدم Hotspot
-     *
-     * كلمة المرور للكرت تكون فارغة.
-     *
-     * email مثال:
-     * 1@nobind.com
-     *
-     * أو:
-     * 1h@nobind.com
-     */
-    public void addHotspotUser(
-            String name,
-            String profile,
-            String limitUptime,
-            String email
-    ) throws Exception {
-
-        Map<String, String> attrs =
-                new LinkedHashMap<>();
-
-        // اسم المستخدم
-        attrs.put(
-                "name",
-                name
-        );
-
-        /*
-         * لا نضع password هنا.
-         *
-         * هذا يجعل الكرت بدون كلمة مرور.
-         */
-
-        // البروفايل
-        if (profile != null
-                && !profile.isEmpty()) {
-
-            attrs.put(
-                    "profile",
-                    profile
-            );
-        }
-
-        // مدة الصلاحية
-        if (limitUptime != null
-                && !limitUptime.isEmpty()) {
-
-            attrs.put(
-                    "limit-uptime",
-                    limitUptime
-            );
-        }
-
-        // البريد الإلكتروني
-        if (email != null
-                && !email.isEmpty()) {
-
-            attrs.put(
-                    "email",
-                    email
-            );
-        }
-
-        command(
-                "/ip/hotspot/user/add",
-                attrs
-        );
-    }
-
-    public void close() {
-
-        try {
-
-            if (socket != null) {
-                socket.close();
-            }
-
-        } catch (Exception ignored) {
-        }
-    }
+    void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
+    @Override protected void onDestroy(){if(api!=null)api.close();executor.shutdownNow();super.onDestroy();}
 }
