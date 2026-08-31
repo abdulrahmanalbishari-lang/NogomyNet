@@ -35,7 +35,10 @@ public class RouterOsApi {
         }
     }
 
-    public List<Map<String, String>> command(String command, String... words) throws Exception {
+    public List<Map<String, String>> command(
+            String command,
+            String... words) throws Exception {
+
         List<String> sentence = new ArrayList<>();
         sentence.add(command);
         Collections.addAll(sentence, words);
@@ -76,18 +79,22 @@ public class RouterOsApi {
 
         if (n < 0x80) {
             out.write(n);
+
         } else if (n < 0x4000) {
             out.write((n >> 8) | 0x80);
             out.write(n & 0xff);
+
         } else if (n < 0x200000) {
             out.write((n >> 16) | 0xC0);
             out.write((n >> 8) & 0xff);
             out.write(n & 0xff);
+
         } else if (n < 0x10000000) {
             out.write((n >> 24) | 0xE0);
             out.write((n >> 16) & 0xff);
             out.write((n >> 8) & 0xff);
             out.write(n & 0xff);
+
         } else {
             out.write(0xF0);
             out.write((n >> 24) & 0xff);
@@ -111,28 +118,56 @@ public class RouterOsApi {
         }
 
         if (c < 0xC0) {
-            return ((c & 0x3f) << 8) | in.read();
+            int b1 = in.read();
+
+            if (b1 < 0) {
+                throw new EOFException();
+            }
+
+            return ((c & 0x3f) << 8) | b1;
         }
 
         if (c < 0xE0) {
+            int b1 = in.read();
+            int b2 = in.read();
+
+            if (b1 < 0 || b2 < 0) {
+                throw new EOFException();
+            }
+
             return ((c & 0x1f) << 16)
-                    | (in.read() << 8)
-                    | in.read();
+                    | (b1 << 8)
+                    | b2;
         }
 
         if (c < 0xF0) {
+            int b1 = in.read();
+            int b2 = in.read();
+            int b3 = in.read();
+
+            if (b1 < 0 || b2 < 0 || b3 < 0) {
+                throw new EOFException();
+            }
+
             return ((c & 0x0f) << 24)
-                    | (in.read() << 16)
-                    | (in.read() << 8)
-                    | in.read();
+                    | (b1 << 16)
+                    | (b2 << 8)
+                    | b3;
         }
 
-        in.read();
+        int b1 = in.read();
+        int b2 = in.read();
+        int b3 = in.read();
+        int b4 = in.read();
 
-        return (in.read() << 24)
-                | (in.read() << 16)
-                | (in.read() << 8)
-                | in.read();
+        if (b1 < 0 || b2 < 0 || b3 < 0 || b4 < 0) {
+            throw new EOFException();
+        }
+
+        return (b1 << 24)
+                | (b2 << 16)
+                | (b3 << 8)
+                | b4;
     }
 
     private String readWord() throws IOException {
@@ -216,19 +251,34 @@ public class RouterOsApi {
                 : r.get(0);
     }
 
-    public List<Map<String, String>> getHotspotUsers() throws Exception {
+    public List<Map<String, String>> getHotspotUsers()
+            throws Exception {
+
         return command("/ip/hotspot/user/print");
     }
 
-    public List<Map<String, String>> getHotspotActive() throws Exception {
+    public List<Map<String, String>> getHotspotActive()
+            throws Exception {
+
         return command("/ip/hotspot/active/print");
     }
 
+    /*
+     * إضافة مستخدم Hotspot إلى MikroTik
+     *
+     * email:
+     * مثال للصلاحية يوم:
+     * 1@nobind.com
+     *
+     * مثال للصلاحية ساعة:
+     * 1h@nobind.com
+     */
     public void addHotspotUser(
             String name,
             String password,
             String profile,
-            String limitUptime) throws Exception {
+            String limitUptime,
+            String email) throws Exception {
 
         Map<String, String> attrs = new LinkedHashMap<>();
 
@@ -238,6 +288,10 @@ public class RouterOsApi {
 
         if (limitUptime != null && !limitUptime.isEmpty()) {
             attrs.put("limit-uptime", limitUptime);
+        }
+
+        if (email != null && !email.isEmpty()) {
+            attrs.put("email", email);
         }
 
         command("/ip/hotspot/user/add", attrs);
